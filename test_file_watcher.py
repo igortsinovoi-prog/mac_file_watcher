@@ -223,10 +223,37 @@ def test_build_subprocess_kwargs_for_list_command():
 @patch("file_watcher.subprocess.run")
 def test_execute_command_runs_subprocess(mock_run):
     watcher = FileWatcherDaemon(files=["a"], command="echo hi")
-    mock_run.return_value = subprocess.CompletedProcess(args="echo hi", returncode=0)
+    mock_run.return_value = subprocess.CompletedProcess(args="echo hi", returncode=0, stdout="")
     result = watcher.execute_command()
-    mock_run.assert_called_once_with(args="echo hi", shell=True, check=False)
+    mock_run.assert_called_once_with(
+        args="echo hi", shell=True, check=False, stdout=subprocess.PIPE, text=True,
+    )
     assert result.returncode == 0
+
+
+@patch("file_watcher.subprocess.run")
+def test_execute_command_logs_command_stdout(mock_run, caplog):
+    watcher = FileWatcherDaemon(files=["a"], command="echo hi")
+    mock_run.return_value = subprocess.CompletedProcess(args="echo hi", returncode=0, stdout="hello\n")
+    with caplog.at_level("INFO", logger="file_watcher"):
+        watcher.execute_command()
+    assert "Command stdout: hello" in caplog.text
+
+
+def test_log_command_output_logs_nonempty_stdout(caplog):
+    watcher = FileWatcherDaemon(files=["a"], command="echo hi")
+    result = subprocess.CompletedProcess(args="echo hi", returncode=0, stdout="hello\n")
+    with caplog.at_level("INFO", logger="file_watcher"):
+        watcher.log_command_output(result)
+    assert "Command stdout: hello" in caplog.text
+
+
+def test_log_command_output_skips_empty_stdout(caplog):
+    watcher = FileWatcherDaemon(files=["a"], command="echo hi")
+    result = subprocess.CompletedProcess(args="echo hi", returncode=0, stdout="")
+    with caplog.at_level("INFO", logger="file_watcher"):
+        watcher.log_command_output(result)
+    assert "Command stdout" not in caplog.text
 
 
 @patch("file_watcher.subprocess.run")

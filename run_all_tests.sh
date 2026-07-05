@@ -12,6 +12,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
+PYTHON_BIN="$(command -v python3)"
+
 WITH_INSTALL_TEST=false
 for arg in "$@"; do
   case "$arg" in
@@ -37,7 +39,7 @@ run_install_uninstall_test() {
   local plist_path="$HOME/Library/LaunchAgents/$test_label.plist"
 
   cleanup_install_test() {
-    launchctl unload "$plist_path" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/$test_label" 2>/dev/null || true
     rm -f "$plist_path" "$test_watch_file" "$test_out_file"
   }
   trap cleanup_install_test RETURN
@@ -81,21 +83,27 @@ run_install_uninstall_test() {
     echo "FAILED: plist still exists after uninstall" >&2
     return 1
   fi
+
+  local unload_waited=0
+  while launchctl list | grep -q "$test_label" && [[ "$unload_waited" -lt 5 ]]; do
+    sleep 1
+    unload_waited=$((unload_waited + 1))
+  done
   if launchctl list | grep -q "$test_label"; then
-    echo "FAILED: launchd job $test_label still registered after uninstall" >&2
+    echo "FAILED: launchd job $test_label still registered after uninstall (waited ${unload_waited}s)" >&2
     return 1
   fi
-  echo "OK: uninstall removed the plist and unregistered the job."
+  echo "OK: uninstall removed the plist and unregistered the job (waited ${unload_waited}s)."
 }
 
 echo "=== Unit tests (pytest, with coverage) ==="
-"$DIR/.venv/bin/python" -m pytest \
+"$PYTHON_BIN" -m pytest \
   --cov=file_watcher --cov=daemon_watcher --cov=generate_plist \
   --cov-report=term-missing
 
 echo
 echo "=== Smoke test: bare watchdog/FSEvents sanity check ==="
-"$DIR/.venv/bin/python" sanity_tests/bare_watchdog_check.py
+"$PYTHON_BIN" sanity_tests/bare_watchdog_check.py
 
 echo
 echo "=== Smoke test: full daemon against a real file ==="

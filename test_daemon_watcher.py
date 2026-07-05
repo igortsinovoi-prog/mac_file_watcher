@@ -43,7 +43,7 @@ def test_configure_logging_without_log_file():
     with patch("daemon_watcher.logging.basicConfig") as mock_config, \
          patch("daemon_watcher.logging.StreamHandler") as mock_stream:
         daemon_watcher.configure_logging(None)
-    mock_stream.assert_called_once()
+    mock_stream.assert_called_once_with(daemon_watcher.sys.stdout)
     mock_config.assert_called_once()
 
 

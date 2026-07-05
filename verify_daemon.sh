@@ -7,11 +7,12 @@ WATCH_FILE="/tmp/watch_target.txt"
 OUT_FILE="/tmp/watch_out.txt"
 LOG_FILE="/tmp/watch_daemon.log"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_BIN="$(command -v python3)"
 
 rm -f "$WATCH_FILE" "$OUT_FILE" "$LOG_FILE"
 touch "$WATCH_FILE"
 
-"$DIR/.venv/bin/python" "$DIR/daemon_watcher.py" \
+"$PYTHON_BIN" "$DIR/daemon_watcher.py" \
   -f "$WATCH_FILE" \
   -c "echo triggered >> $OUT_FILE" > "$LOG_FILE" 2>&1 &
 WATCHER_PID=$!

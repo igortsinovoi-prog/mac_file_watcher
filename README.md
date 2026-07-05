@@ -16,7 +16,7 @@ a script that removes a specific Chrome extension.
 | `file_watcher.py` | Core, unit-tested logic: `resolve_watch_targets`, `PatchEventHandler` (FSEvents callback filtering + debounce), `FileWatcherDaemon` (command execution, start/stop). No OS-daemon concerns live here. |
 | `daemon_watcher.py` | Thin CLI wrapper around `FileWatcherDaemon`: argument parsing, logging setup, pidfile handling, signal handling, and an optional classic double-fork `daemonize()` for running detached from a terminal. |
 | `generate_plist.py` | Generates a `launchd` LaunchAgent `.plist` from CLI args, using `plistlib` for correct XML escaping. Used by `install.sh`; not meant to be run by hand. |
-| `install.sh` | Installer: creates a venv, installs dependencies, generates a plist via `generate_plist.py`, and registers + starts it with `launchctl` so the watcher runs automatically at every login. Takes the file list and command as its own arguments and passes them straight through. |
+| `install.sh` | Installer: installs dependencies into the system/user Python (no venv), generates a plist via `generate_plist.py`, and registers + starts it with `launchctl` so the watcher runs automatically at every login. Takes the file list and command as its own arguments and passes them straight through. |
 | `uninstall.sh` | Unregisters and removes the LaunchAgent installed by `install.sh`. |
 | `run_all_tests.sh` | Runs the pytest suite (with coverage) and both smoke tests in one shot. Pass `--with-install-test` to also exercise `install.sh`/`uninstall.sh` end to end. |
 | `verify_daemon.sh` | Smoke test: runs `daemon_watcher.py` against a real file in `/tmp`, makes real changes to it, and confirms the command fires. Uses a harmless `echo`-based command (see note below) and self-cleans on exit. |
@@ -24,21 +24,29 @@ a script that removes a specific Chrome extension.
 | `test_file_watcher.py` | Unit tests for `file_watcher.py` — 100% line coverage. |
 | `test_daemon_watcher.py` | Unit tests for `daemon_watcher.py` (including the double-fork `daemonize()`, mocked) — 100% line coverage. |
 | `test_generate_plist.py` | Unit tests for `generate_plist.py` — 100% line coverage. |
-| `requirements.txt` | `watchdog`, `pytest`, `pytest-cov`. |
-| `.venv/` | Local virtualenv (created by `install.sh` or manually; see below). Not checked in. |
-| `logs/` | Created by `install.sh`; holds the daemon's stdout/stderr when running under `launchd`. |
+| `requirements.txt` | `watchdog`, `pytest`, `pytest-cov` — installed into your system/user Python's site-packages, not a venv. |
+
+Logs live under the macOS-standard `~/Library/Logs/mac_file_watcher/` (see
+"Installing as a startup daemon" below) — not inside this directory.
 
 ## Setup (without installing as a startup daemon)
 
+This project runs directly against your system `python3` — no virtual
+environment. Homebrew's Python refuses `pip install` outside a venv by
+default (PEP 668); `--break-system-packages` overrides that guard, and
+`--user` keeps the install scoped to your user site-packages rather than
+Homebrew's own files:
+
 ```bash
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
+python3 -m pip install --user -r requirements.txt
+# If that fails with "externally-managed-environment":
+python3 -m pip install --user --break-system-packages -r requirements.txt
 ```
 
 Run it directly in the foreground:
 
 ```bash
-./.venv/bin/python daemon_watcher.py \
+python3 daemon_watcher.py \
   -f "/Library/Managed Preferences/com.google.Chrome.plist" \
   -c /path/to/remove_extension.sh
 ```
@@ -61,7 +69,8 @@ osascript -l JavaScript remove-browser-extension.js "$INPUT"
 
 ## Installing as a startup daemon (launchd)
 
-`install.sh` sets up the venv, installs dependencies, and registers a
+`install.sh` installs dependencies into your system/user Python (handling the
+`--break-system-packages` retry above automatically), and registers a
 **LaunchAgent** (not a LaunchDaemon — LaunchDaemons run as root before login
 with no GUI session, so anything needing the user's session would silently
 fail; LaunchAgents run in the user's own login session).
@@ -78,14 +87,51 @@ Options: `-f/--file` (repeatable, required), `-c/--command` (required),
 instance watching different files).
 
 This writes `~/Library/LaunchAgents/<label>.plist`, and calls
-`launchctl load -w` so it starts immediately and again at every future login.
-`RunAtLoad` and `KeepAlive` are both set, so `launchd` also restarts it if it
-ever crashes.
+`launchctl bootstrap gui/<uid>` (the modern replacement for `load`) so it
+starts immediately and again at every future login. `RunAtLoad` and
+`KeepAlive` are both set, so `launchd` also restarts it if it ever crashes.
+
+Logs go to the standard macOS per-user log directory,
+`~/Library/Logs/mac_file_watcher/`, as `<label>.out.log` and `<label>.err.log`
+(so multiple labels/instances don't collide).
+
+### Installing with `sudo` (on behalf of another user)
+
+`install.sh`/`uninstall.sh` can also be run as root, e.g. to install this as
+part of a provisioning script rather than interactively as the target user:
+
+```bash
+sudo ./install.sh \
+  -f "/Library/Managed Preferences/com.google.Chrome.plist" \
+  -c /path/to/remove_extension.sh
+```
+
+The daemon always ends up running as a normal *user*, never as root — a
+LaunchAgent bootstrapped into `gui/<uid>` runs as that uid regardless of who
+bootstrapped it, and it needs to run as a user to reach that user's GUI
+session (for something like an `osascript` dialog) anyway. So under `sudo`:
+
+- The target user defaults to `$SUDO_USER` (override with `--target-user`).
+- Dependencies are installed for that user (`sudo -u <user> pip install --user ...`),
+  not for root.
+- The plist is written to `/Library/LaunchAgents/<label>.plist` (root-owned,
+  as launchd requires there) instead of `~/Library/LaunchAgents/`.
+- Logs go to `~/<target-user>/Library/Logs/mac_file_watcher/`.
+- It's bootstrapped specifically into `gui/<target-uid>`, not the caller's
+  own session.
+
+Modern `launchd` is strict about this: a `sudo launchctl load` on a plist
+under `~/Library/LaunchAgents` fails with "Path had bad ownership/permissions"
+because a root-run legacy `load` expects a system-wide LaunchDaemon, not a
+per-user LaunchAgent — hence the `/Library/LaunchAgents` + `bootstrap
+gui/<uid>` combination above.
 
 To remove it:
 
 ```bash
 ./uninstall.sh --label com.codestation.filewatcher   # label optional if using the default
+# or, if installed via sudo:
+sudo ./uninstall.sh --label com.codestation.filewatcher --target-user "$USER"
 ```
 
 ## Testing
@@ -109,8 +155,8 @@ assert against, and `remove-browser-extension.js` isn't part of this repo.
 Or run pieces individually:
 
 ```bash
-./.venv/bin/python -m pytest --cov=file_watcher --cov=daemon_watcher --cov=generate_plist --cov-report=term-missing
-./.venv/bin/python sanity_tests/bare_watchdog_check.py
+python3 -m pytest --cov=file_watcher --cov=daemon_watcher --cov=generate_plist --cov-report=term-missing
+python3 sanity_tests/bare_watchdog_check.py
 ./verify_daemon.sh
 ```
 

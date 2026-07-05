@@ -109,7 +109,13 @@ class FileWatcherDaemon:
     def execute_command(self) -> subprocess.CompletedProcess:
         kwargs = self.build_subprocess_kwargs()
         logger.info("Change detected, running command: %s", self.command)
-        return subprocess.run(**kwargs, check=False)
+        result = subprocess.run(**kwargs, check=False, stdout=subprocess.PIPE, text=True)
+        self.log_command_output(result)
+        return result
+
+    def log_command_output(self, result: subprocess.CompletedProcess) -> None:
+        if result.stdout:
+            logger.info("Command stdout: %s", result.stdout.rstrip())
 
     def handle_change(self, changed_path: str) -> None:
         logger.info("File changed: %s", changed_path)

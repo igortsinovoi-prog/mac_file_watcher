@@ -19,7 +19,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                          help="Shell command to run when a watched file changes.")
     parser.add_argument("--debounce", type=float, default=0.5)
     parser.add_argument("--label", required=True, help="launchd job label.")
-    parser.add_argument("--python", required=True, help="Path to the venv's python executable.")
+    parser.add_argument("--python", required=True, help="Path to the python executable to run the daemon with.")
     parser.add_argument("--daemon-script", required=True, help="Path to daemon_watcher.py.")
     parser.add_argument("--log-dir", required=True, help="Directory for stdout/stderr logs.")
     parser.add_argument("--output", required=True, help="Where to write the .plist file.")
@@ -40,8 +40,8 @@ def build_plist(args: argparse.Namespace) -> Dict:
         "ProgramArguments": build_program_arguments(args),
         "RunAtLoad": True,
         "KeepAlive": True,
-        "StandardOutPath": os.path.join(args.log_dir, "filewatcher.out.log"),
-        "StandardErrorPath": os.path.join(args.log_dir, "filewatcher.err.log"),
+        "StandardOutPath": os.path.join(args.log_dir, f"{args.label}.out.log"),
+        "StandardErrorPath": os.path.join(args.log_dir, f"{args.label}.err.log"),
     }
 
 

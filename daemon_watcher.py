@@ -49,7 +49,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def configure_logging(log_file: Optional[str] = None) -> None:
-    handlers = [logging.FileHandler(log_file)] if log_file else [logging.StreamHandler()]
+    handlers = [logging.FileHandler(log_file)] if log_file else [logging.StreamHandler(sys.stdout)]
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

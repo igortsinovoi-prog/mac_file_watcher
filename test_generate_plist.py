@@ -52,8 +52,8 @@ def test_build_plist_contains_expected_keys(tmp_path):
     assert plist_data["Label"] == "com.test.watcher"
     assert plist_data["RunAtLoad"] is True
     assert plist_data["KeepAlive"] is True
-    assert plist_data["StandardOutPath"] == str(tmp_path / "filewatcher.out.log")
-    assert plist_data["StandardErrorPath"] == str(tmp_path / "filewatcher.err.log")
+    assert plist_data["StandardOutPath"] == str(tmp_path / "com.test.watcher.out.log")
+    assert plist_data["StandardErrorPath"] == str(tmp_path / "com.test.watcher.err.log")
     assert plist_data["ProgramArguments"][0] == "/venv/bin/python"
 
 
