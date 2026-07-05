@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Runtime artifacts created by install.sh / daemon_watcher.py
+logs/
+*.log
+*.pid
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/

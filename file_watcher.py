@@ -1,0 +1,136 @@
+"""Event-driven file watching on top of macOS's native FSEvents API.
+
+Uses the `watchdog` package (pip install watchdog), which on macOS talks
+directly to the CoreServices FSEvents framework -- no polling loop.
+
+Kept free of OS-daemon concerns (forking, signals, pidfiles) so it stays easy
+to unit test. See daemon_watcher.py for the CLI/daemon wrapper.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import time
+from typing import Callable, Dict, List, Optional, Sequence, Set, Union
+
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
+logger = logging.getLogger(__name__)
+
+Command = Union[str, Sequence[str]]
+
+
+def resolve_watch_targets(files: Sequence[str]) -> Dict[str, Set[str]]:
+    """Group watched files by parent directory.
+
+    FSEvents (via watchdog) watches directories, not individual files, so we
+    watch each file's parent directory and filter events down to the files
+    we actually care about.
+    """
+    targets: Dict[str, Set[str]] = {}
+    for path in files:
+        real_path = os.path.realpath(path)
+        parent_dir = os.path.dirname(real_path)
+        targets.setdefault(parent_dir, set()).add(real_path)
+    return targets
+
+
+class PatchEventHandler(FileSystemEventHandler):
+    """Filters FSEvents callbacks down to a set of watched paths and debounces them."""
+
+    def __init__(
+        self,
+        watched_paths: Set[str],
+        on_change: Callable[[str], None],
+        debounce_seconds: float = 0.5,
+        time_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.watched_paths = watched_paths
+        self.on_change = on_change
+        self.debounce_seconds = debounce_seconds
+        self.time_fn = time_fn
+        self._last_triggered: Optional[float] = None
+
+    def resolve_event_path(self, event) -> str:
+        dest_path = getattr(event, "dest_path", None)
+        return os.path.realpath(dest_path or event.src_path)
+
+    def is_relevant(self, event) -> bool:
+        if event.is_directory:
+            return False
+        return self.resolve_event_path(event) in self.watched_paths
+
+    def should_trigger(self) -> bool:
+        now = self.time_fn()
+        if self._last_triggered is None:
+            return True
+        return (now - self._last_triggered) >= self.debounce_seconds
+
+    def mark_triggered(self) -> None:
+        self._last_triggered = self.time_fn()
+
+    def on_any_event(self, event) -> None:
+        """Single entry point watchdog calls for every filesystem event."""
+        if not self.is_relevant(event):
+            return
+        if not self.should_trigger():
+            return
+        self.mark_triggered()
+        self.on_change(self.resolve_event_path(event))
+
+
+class FileWatcherDaemon:
+    """Watches a list of files via native FSEvents and runs a command on change."""
+
+    def __init__(
+        self,
+        files: Sequence[str],
+        command: Command,
+        debounce_seconds: float = 0.5,
+        observer_factory: Callable[[], object] = Observer,
+    ) -> None:
+        if not files:
+            raise ValueError("files must contain at least one path")
+        if not command:
+            raise ValueError("command must not be empty")
+        self.files: List[str] = list(files)
+        self.command: Command = command
+        self.debounce_seconds: float = debounce_seconds
+        self.observer_factory = observer_factory
+        self._observer = None
+
+    def build_subprocess_kwargs(self) -> Dict:
+        if isinstance(self.command, str):
+            return {"args": self.command, "shell": True}
+        return {"args": list(self.command), "shell": False}
+
+    def execute_command(self) -> subprocess.CompletedProcess:
+        kwargs = self.build_subprocess_kwargs()
+        logger.info("Change detected, running command: %s", self.command)
+        return subprocess.run(**kwargs, check=False)
+
+    def handle_change(self, changed_path: str) -> None:
+        logger.info("File changed: %s", changed_path)
+        self.execute_command()
+
+    def start(self) -> None:
+        targets = resolve_watch_targets(self.files)
+        watched_paths = {path for paths in targets.values() for path in paths}
+        handler = PatchEventHandler(
+            watched_paths=watched_paths,
+            on_change=self.handle_change,
+            debounce_seconds=self.debounce_seconds,
+        )
+        self._observer = self.observer_factory()
+        for directory in targets:
+            self._observer.schedule(handler, directory, recursive=False)
+        self._observer.start()
+
+    def stop(self) -> None:
+        if self._observer is None:
+            return
+        self._observer.stop()
+        self._observer.join()
+        self._observer = None
