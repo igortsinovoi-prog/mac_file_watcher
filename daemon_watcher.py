@@ -39,6 +39,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--debounce", type=float, default=0.5,
         help="Seconds to collapse rapid duplicate events into one run (default: 0.5).",
     )
+    parser.add_argument(
+        "--skip-initial-run", action="store_true",
+        help="Don't run --command once immediately on startup. By default it "
+             "runs once at start (before watching begins), then again on "
+             "every watched-file change.",
+    )
     parser.add_argument("--daemon", action="store_true", help="Detach and run in the background.")
     parser.add_argument(
         "--pidfile", default=DEFAULT_PIDFILE,
@@ -108,6 +114,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         files=args.files,
         command=args.command,
         debounce_seconds=args.debounce,
+        run_on_start=not args.skip_initial_run,
     )
     stop_event = threading.Event()
     install_signal_handlers(stop_event)

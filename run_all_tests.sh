@@ -3,10 +3,11 @@
 # smoke tests, so a single command verifies both "the logic is correct" and
 # "it actually works against a real file / real FSEvents".
 #
-# Pass --with-install-test to also exercise install.sh/uninstall.sh end to
-# end (registers a throwaway launchd job under a distinct "selftest" label,
-# confirms it fires on a real file change, then unregisters it). This is
-# opt-in because it touches real launchd state, unlike the other smoke tests.
+# Pass --with-install-test to also exercise prod/install.sh/uninstall.sh end
+# to end (registers a throwaway launchd job under a distinct "selftest"
+# label, confirms it fires on a real file change, then unregisters it). This
+# requires prod/ to already exist (run build.sh first) and requires sudo, so
+# it's opt-in and prompts for a password interactively.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,23 +32,30 @@ done
 
 run_install_uninstall_test() {
   echo
-  echo "=== Smoke test: install.sh / uninstall.sh round trip ==="
+  echo "=== Smoke test: prod/install.sh / prod/uninstall.sh round trip (sudo) ==="
+
+  if [[ ! -d "$DIR/prod" ]]; then
+    echo "Error: $DIR/prod does not exist. Run ./build.sh first." >&2
+    return 1
+  fi
 
   local test_label="com.codestation.filewatcher.selftest"
   local test_watch_file="/tmp/installer_selftest_watch.txt"
   local test_out_file="/tmp/installer_selftest_out.txt"
-  local plist_path="$HOME/Library/LaunchAgents/$test_label.plist"
+  local plist_path="/Library/LaunchDaemons/$test_label.plist"
+  local domain="system/$test_label"
 
   cleanup_install_test() {
-    launchctl bootout "gui/$(id -u)/$test_label" 2>/dev/null || true
-    rm -f "$plist_path" "$test_watch_file" "$test_out_file"
+    sudo launchctl bootout "$domain" 2>/dev/null || true
+    sudo rm -f "$plist_path"
+    rm -f "$test_watch_file" "$test_out_file"
   }
   trap cleanup_install_test RETURN
 
   rm -f "$test_watch_file" "$test_out_file"
   touch "$test_watch_file"
 
-  "$DIR/install.sh" \
+  sudo "$DIR/prod/install.sh" \
     -f "$test_watch_file" \
     -c "echo triggered >> $test_out_file" \
     --label "$test_label"
@@ -56,8 +64,8 @@ run_install_uninstall_test() {
     echo "FAILED: plist was not created at $plist_path" >&2
     return 1
   fi
-  if ! launchctl list | grep -q "$test_label"; then
-    echo "FAILED: launchd job $test_label is not registered" >&2
+  if ! sudo launchctl print "$domain" >/dev/null 2>&1; then
+    echo "FAILED: launchd job $test_label is not registered in $domain" >&2
     return 1
   fi
   echo "OK: plist created and job registered with launchd."
@@ -73,11 +81,17 @@ run_install_uninstall_test() {
 
   if [[ ! -f "$test_out_file" ]]; then
     echo "FAILED: daemon did not run the command after a file change (waited ${waited}s)" >&2
+    echo "--- launchctl print $domain ---" >&2
+    sudo launchctl print "$domain" >&2 2>&1 || true
+    echo "--- /Library/Logs/Glow/$test_label.out.log ---" >&2
+    sudo cat "/Library/Logs/Glow/$test_label.out.log" >&2 2>&1 || true
+    echo "--- /Library/Logs/Glow/$test_label.err.log ---" >&2
+    sudo cat "/Library/Logs/Glow/$test_label.err.log" >&2 2>&1 || true
     return 1
   fi
   echo "OK: daemon ran the command after a file change (waited ${waited}s)."
 
-  "$DIR/uninstall.sh" --label "$test_label"
+  sudo "$DIR/prod/uninstall.sh" --label "$test_label"
 
   if [[ -f "$plist_path" ]]; then
     echo "FAILED: plist still exists after uninstall" >&2
@@ -85,11 +99,11 @@ run_install_uninstall_test() {
   fi
 
   local unload_waited=0
-  while launchctl list | grep -q "$test_label" && [[ "$unload_waited" -lt 5 ]]; do
+  while sudo launchctl print "$domain" >/dev/null 2>&1 && [[ "$unload_waited" -lt 5 ]]; do
     sleep 1
     unload_waited=$((unload_waited + 1))
   done
-  if launchctl list | grep -q "$test_label"; then
+  if sudo launchctl print "$domain" >/dev/null 2>&1; then
     echo "FAILED: launchd job $test_label still registered after uninstall (waited ${unload_waited}s)" >&2
     return 1
   fi
@@ -108,6 +122,18 @@ echo "=== Smoke test: bare watchdog/FSEvents sanity check ==="
 echo
 echo "=== Smoke test: full daemon against a real file ==="
 "$DIR/verify_daemon.sh"
+
+echo
+echo "=== Smoke test: self-trigger loop check ==="
+"$PYTHON_BIN" sanity_tests/self_trigger_loop_check.py
+
+echo
+echo "=== Smoke test: multi-path debounce check ==="
+"$PYTHON_BIN" sanity_tests/multi_path_debounce_check.py
+
+echo
+echo "=== Smoke test: run-on-start check ==="
+"$PYTHON_BIN" sanity_tests/run_on_start_check.py
 
 if [[ "$WITH_INSTALL_TEST" == true ]]; then
   run_install_uninstall_test

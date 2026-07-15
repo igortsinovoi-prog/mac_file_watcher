@@ -26,7 +26,7 @@ def test_parse_args_accepts_custom_debounce():
     assert args.debounce == 1.5
 
 
-def test_build_program_arguments_orders_files_then_command_then_debounce():
+def test_build_program_arguments_orders_files_then_command_then_debounce_then_log_file():
     args = generate_plist.parse_args(
         ["--file", "a.txt", "--file", "b.txt", "--debounce", "1.5"] + COMMON_ARGS
     )
@@ -35,6 +35,7 @@ def test_build_program_arguments_orders_files_then_command_then_debounce():
         "/venv/bin/python", "/x/daemon_watcher.py",
         "--file", "a.txt", "--file", "b.txt",
         "--command", "echo hi", "--debounce", "1.5",
+        "--log-file", "/tmp/logs/com.test.watcher.log",
     ]
 
 
@@ -52,6 +53,7 @@ def test_build_plist_contains_expected_keys(tmp_path):
     assert plist_data["Label"] == "com.test.watcher"
     assert plist_data["RunAtLoad"] is True
     assert plist_data["KeepAlive"] is True
+    assert "LimitLoadToSessionType" not in plist_data
     assert plist_data["StandardOutPath"] == str(tmp_path / "com.test.watcher.out.log")
     assert plist_data["StandardErrorPath"] == str(tmp_path / "com.test.watcher.err.log")
     assert plist_data["ProgramArguments"][0] == "/venv/bin/python"
@@ -85,4 +87,5 @@ def test_main_writes_plist_file(tmp_path):
         "/venv/bin/python", "/x/daemon_watcher.py",
         "--file", "watched.txt",
         "--command", "echo hi", "--debounce", "0.5",
+        "--log-file", str(tmp_path / "logs" / "com.test.watcher.log"),
     ]

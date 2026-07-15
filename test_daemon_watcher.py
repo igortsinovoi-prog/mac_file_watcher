@@ -18,6 +18,7 @@ def test_parse_args_defaults():
     assert args.files == ["a.txt"]
     assert args.command == "echo hi"
     assert args.debounce == 0.5
+    assert args.skip_initial_run is False
     assert args.daemon is False
     assert args.pidfile == daemon_watcher.DEFAULT_PIDFILE
     assert args.log_file is None
@@ -26,10 +27,12 @@ def test_parse_args_defaults():
 def test_parse_args_multiple_files_and_overrides():
     args = daemon_watcher.parse_args([
         "-f", "a.txt", "-f", "b.txt", "-c", "echo hi",
-        "--debounce", "1.5", "--daemon", "--pidfile", "/tmp/x.pid", "--log-file", "/tmp/x.log",
+        "--debounce", "1.5", "--skip-initial-run",
+        "--daemon", "--pidfile", "/tmp/x.pid", "--log-file", "/tmp/x.log",
     ])
     assert args.files == ["a.txt", "b.txt"]
     assert args.debounce == 1.5
+    assert args.skip_initial_run is True
     assert args.daemon is True
     assert args.pidfile == "/tmp/x.pid"
     assert args.log_file == "/tmp/x.log"
@@ -169,10 +172,26 @@ def test_main_without_daemon_starts_and_stops_watcher():
 
     mock_daemonize.assert_not_called()
     mock_configure_logging.assert_called_once_with(None)
-    mock_cls.assert_called_once_with(files=["a.txt"], command="echo hi", debounce_seconds=0.5)
+    mock_cls.assert_called_once_with(
+        files=["a.txt"], command="echo hi", debounce_seconds=0.5, run_on_start=True,
+    )
     fake_watcher.start.assert_called_once()
     mock_event.wait.assert_called_once()
     fake_watcher.stop.assert_called_once()
+
+
+def test_main_passes_run_on_start_false_when_skip_initial_run_flag_set():
+    fake_watcher = MagicMock()
+    with patch("daemon_watcher.daemonize"), \
+         patch("daemon_watcher.configure_logging"), \
+         patch("daemon_watcher.FileWatcherDaemon", return_value=fake_watcher) as mock_cls, \
+         patch("daemon_watcher.threading.Event") as mock_event_cls:
+        mock_event_cls.return_value = MagicMock()
+        daemon_watcher.main(["-f", "a.txt", "-c", "echo hi", "--skip-initial-run"])
+
+    mock_cls.assert_called_once_with(
+        files=["a.txt"], command="echo hi", debounce_seconds=0.5, run_on_start=False,
+    )
 
 
 def test_main_with_daemon_flag_calls_daemonize():

@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 Command = Union[str, Sequence[str]]
 
+# Where install.sh deploys the runtime scripts (daemon_watcher.py,
+# file_watcher.py, and any command scripts like remove-browser-extension.js).
+# Used as the triggered command's default working directory, so a --command
+# that references a script by a bare relative name finds it there.
+DEFAULT_COMMAND_DIR = "/Library/Application Support/Glow"
+
 
 def resolve_watch_targets(files: Sequence[str]) -> Dict[str, Set[str]]:
     """Group watched files by parent directory.
@@ -77,8 +83,15 @@ class PatchEventHandler(FileSystemEventHandler):
             return
         if not self.should_trigger():
             return
-        self.mark_triggered()
+        # Marked *after* on_change (which runs the command, and can take
+        # seconds) rather than before it, so the debounce window covers
+        # events the command's own file writes cause -- e.g. a script that
+        # edits the very file being watched, which would otherwise
+        # re-trigger itself in a loop once its own edit lands outside a
+        # debounce window measured from trigger-time instead of
+        # completion-time.
         self.on_change(self.resolve_event_path(event))
+        self.mark_triggered()
 
 
 class FileWatcherDaemon:
@@ -90,6 +103,8 @@ class FileWatcherDaemon:
         command: Command,
         debounce_seconds: float = 0.5,
         observer_factory: Callable[[], object] = Observer,
+        command_dir: Optional[str] = DEFAULT_COMMAND_DIR,
+        run_on_start: bool = True,
     ) -> None:
         if not files:
             raise ValueError("files must contain at least one path")
@@ -99,16 +114,22 @@ class FileWatcherDaemon:
         self.command: Command = command
         self.debounce_seconds: float = debounce_seconds
         self.observer_factory = observer_factory
+        self.command_dir = command_dir
+        self.run_on_start = run_on_start
         self._observer = None
 
     def build_subprocess_kwargs(self) -> Dict:
         if isinstance(self.command, str):
-            return {"args": self.command, "shell": True}
-        return {"args": list(self.command), "shell": False}
+            kwargs: Dict = {"args": self.command, "shell": True}
+        else:
+            kwargs = {"args": list(self.command), "shell": False}
+        if self.command_dir and os.path.isdir(self.command_dir):
+            kwargs["cwd"] = self.command_dir
+        return kwargs
 
     def execute_command(self) -> subprocess.CompletedProcess:
         kwargs = self.build_subprocess_kwargs()
-        logger.info("Change detected, running command: %s", self.command)
+        logger.info("Running command: %s", self.command)
         result = subprocess.run(**kwargs, check=False, stdout=subprocess.PIPE, text=True)
         self.log_command_output(result)
         return result
@@ -122,6 +143,16 @@ class FileWatcherDaemon:
         self.execute_command()
 
     def start(self) -> None:
+        logger.info("Starting watcher for %d file(s): %s", len(self.files), self.files)
+
+        # Run before the observer exists, not after: if this command writes
+        # to a watched file itself (see handle_change's docstring on the
+        # same issue), doing it before we're actually watching means those
+        # writes can't be picked up as a spurious first change event.
+        if self.run_on_start:
+            logger.info("Running command on startup")
+            self.execute_command()
+
         targets = resolve_watch_targets(self.files)
         watched_paths = {path for paths in targets.values() for path in paths}
         handler = PatchEventHandler(

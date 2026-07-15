@@ -22,3 +22,6 @@ logs/
 .DS_Store
 .vscode/
 .idea/
+
+# Build output (see build.sh)
+prod/

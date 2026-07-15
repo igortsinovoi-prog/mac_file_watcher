@@ -14,7 +14,8 @@ touch "$WATCH_FILE"
 
 "$PYTHON_BIN" "$DIR/daemon_watcher.py" \
   -f "$WATCH_FILE" \
-  -c "echo triggered >> $OUT_FILE" > "$LOG_FILE" 2>&1 &
+  -c "echo triggered >> $OUT_FILE" \
+  --skip-initial-run > "$LOG_FILE" 2>&1 &
 WATCHER_PID=$!
 
 cleanup() {

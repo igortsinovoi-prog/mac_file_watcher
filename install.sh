@@ -1,44 +1,41 @@
 #!/bin/bash
-# Installs dependencies into the local (system/user) Python environment and
-# registers the file watcher as a launchd LaunchAgent, so it starts
-# automatically at login and is supervised (restarted if it crashes) for as
-# long as the target user is logged in.
+# Installs the watcher runtime and registers it as a launchd LaunchDaemon, so
+# it runs as root starting at boot (before any login) and is supervised
+# (restarted if it crashes) for as long as the machine is up.
 #
-# A LaunchAgent (not a LaunchDaemon) is used deliberately: LaunchDaemons run
-# as root before login with no access to the user's GUI session, so a command
-# like an AppleScript dialog popup would silently fail to display.
+# NOTE: a LaunchDaemon has no GUI session at all. If --command needs to talk
+# to a running GUI app (e.g. osascript sending Apple Events, or anything
+# gated by Automation/Accessibility permissions), it may behave differently
+# here than it did as a LaunchAgent -- there is no logged-in user, no
+# Aqua session, nothing on screen. Root-level filesystem/process work is
+# unaffected.
 #
-# Can be run either as a normal user (installs for yourself) or via sudo
-# (installs on behalf of $SUDO_USER, or --target-user). Either way, the
-# daemon itself always ends up running as the target *user*, never as root:
-# launchd's "gui/<uid>" domain runs jobs as that uid regardless of who
-# bootstrapped them, so dependencies are installed for that user too.
+# Must be run as root (via sudo). Everything it touches is a system-wide
+# location -- /Library/Application Support/Glow for the runtime scripts,
+# /Library/Logs/Glow for output, /Library/LaunchDaemons for the plist -- and
+# dependencies are installed system-wide too.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_DIR="/Library/Application Support/Glow"
+LOG_DIR="/Library/Logs/Glow"
+PLIST_DIR="/Library/LaunchDaemons"
 LABEL="com.codestation.filewatcher"
 DEBOUNCE="0.5"
 FILES=()
 COMMAND=""
-TARGET_USER=""
 
 usage() {
   cat <<EOF
-Usage: $0 -f FILE [-f FILE ...] -c COMMAND [--debounce SECONDS] [--label LABEL] [--target-user USER]
+Usage: sudo $0 -f FILE [-f FILE ...] -c COMMAND [--debounce SECONDS] [--label LABEL]
 
-  -f, --file         A file to watch. Repeat for multiple files. Required.
-  -c, --command      Shell command to run when a watched file changes. Required.
-      --debounce     Seconds to collapse rapid duplicate events (default: $DEBOUNCE).
-      --label        launchd job label / plist filename (default: $LABEL).
-      --target-user  When run via sudo, which user's session to install for
-                      (default: \$SUDO_USER). Ignored when not run as root.
+  -f, --file      A file to watch. Repeat for multiple times. Required.
+  -c, --command   Shell command to run when a watched file changes. Required.
+      --debounce  Seconds to collapse rapid duplicate events (default: $DEBOUNCE).
+      --label     launchd job label / plist filename (default: $LABEL).
 
 Example:
-  $0 -f ~/notes/todo.txt -c 'osascript -e "display dialog \\"patch\\""'
-
-Can be run with sudo to install on behalf of another logged-in user; the
-plist then lives in /Library/LaunchAgents (root-owned, as launchd requires)
-and is bootstrapped into that user's GUI session specifically.
+  sudo $0 -f ~/notes/todo.txt -c 'osascript -e "display dialog \\"patch\\""'
 EOF
   exit 1
 }
@@ -49,7 +46,6 @@ while [[ $# -gt 0 ]]; do
     -c|--command) COMMAND="$2"; shift 2 ;;
     --debounce) DEBOUNCE="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
-    --target-user) TARGET_USER="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
@@ -60,63 +56,60 @@ if [[ ${#FILES[@]} -eq 0 || -z "$COMMAND" ]]; then
   usage
 fi
 
-RUNNING_AS_ROOT=false
-if [[ "$(id -u)" -eq 0 ]]; then
-  RUNNING_AS_ROOT=true
-  TARGET_USER="${TARGET_USER:-${SUDO_USER:-}}"
-  if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
-    echo "Error: running as root but no target user to install for." >&2
-    echo "Pass --target-user USER, or run via 'sudo' (so \$SUDO_USER is set)." >&2
-    exit 1
-  fi
-fi
-
-run_as_target() {
-  if [[ "$RUNNING_AS_ROOT" == true ]]; then
-    sudo -u "$TARGET_USER" -H "$@"
-  else
-    "$@"
-  fi
-}
-
-if [[ "$RUNNING_AS_ROOT" == true ]]; then
-  TARGET_SHELL="$(dscl . -read "/Users/$TARGET_USER" UserShell | awk '{print $2}')"
-  PYTHON_BIN="$(sudo -u "$TARGET_USER" -H "${TARGET_SHELL:-/bin/zsh}" -lc 'command -v python3' || true)"
-  TARGET_UID="$(id -u "$TARGET_USER")"
-  PLIST_DIR="/Library/LaunchAgents"
-  TARGET_HOME="$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | awk '{print $2}')"
-  LOG_DIR="$TARGET_HOME/Library/Logs/mac_file_watcher"
-else
-  PYTHON_BIN="$(command -v python3 || true)"
-  TARGET_UID="$(id -u)"
-  PLIST_DIR="$HOME/Library/LaunchAgents"
-  LOG_DIR="$HOME/Library/Logs/mac_file_watcher"
-fi
-
-if [[ -z "$PYTHON_BIN" ]]; then
-  echo "Error: python3 not found on PATH for ${TARGET_USER:-$(whoami)}." >&2
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Error: run this with sudo." >&2
+  echo "It needs root to write to $RUNTIME_DIR, $LOG_DIR, and $PLIST_DIR." >&2
   exit 1
 fi
 
-echo "==> Installing dependencies for $PYTHON_BIN (user: ${TARGET_USER:-$(whoami)}, no virtual environment)"
+for f in "$DIR/daemon_watcher.py" "$DIR/file_watcher.py" "$DIR/generate_plist.py" "$DIR/requirements.txt" "$DIR/remove-browser-extension.js"; do
+  if [[ ! -f "$f" ]]; then
+    echo "Error: expected to find $f next to this script. Run build.sh first?" >&2
+    exit 1
+  fi
+done
+
+PYTHON_BIN="$(command -v python3 || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "Error: python3 not found on PATH." >&2
+  exit 1
+fi
+
+echo "==> Installing dependencies for $PYTHON_BIN (system-wide, no virtual environment)"
+# Without --user, pip still installs to a *user* site-packages directory (not
+# the true global one) when the target global directory isn't writable --
+# and it resolves "user" via $HOME. sudo on macOS does NOT reset $HOME by
+# default, so a plain "sudo ./install.sh" leaves $HOME as the invoking admin's
+# home, and pip installs there -- e.g. /Users/abuyam/Library/Python/...
+# The daemon then runs as root (this is a LaunchDaemon), with no $HOME set,
+# so it resolves root's own home (/var/root) and looks in
+# /var/root/Library/Python/... instead, finding nothing: ModuleNotFoundError.
+# Forcing HOME=/var/root here makes pip's resolution match root's real home,
+# consistent with how the daemon (also HOME-less, falling back to the same
+# real home via the password database) will look for it.
 PIP_ERR="$(mktemp)"
 trap 'rm -f "$PIP_ERR"' EXIT
-if ! run_as_target "$PYTHON_BIN" -m pip install -q --user -r "$DIR/requirements.txt" 2>"$PIP_ERR"; then
+if ! HOME=/var/root "$PYTHON_BIN" -m pip install -q -r "$DIR/requirements.txt" 2>"$PIP_ERR"; then
   if grep -q "externally-managed-environment" "$PIP_ERR"; then
     echo "    (Homebrew Python blocks system-wide pip installs by default;"
-    echo "     retrying with --break-system-packages, scoped to --user so it"
-    echo "     only touches the user's site-packages, not Homebrew's files.)"
-    run_as_target "$PYTHON_BIN" -m pip install -q --user --break-system-packages -r "$DIR/requirements.txt"
+    echo "     retrying with --break-system-packages.)"
+    HOME=/var/root "$PYTHON_BIN" -m pip install -q --break-system-packages -r "$DIR/requirements.txt"
   else
     cat "$PIP_ERR" >&2
     exit 1
   fi
 fi
 
+echo "==> Deploying watcher runtime to $RUNTIME_DIR"
+mkdir -p "$RUNTIME_DIR"
+cp "$DIR/daemon_watcher.py" "$DIR/file_watcher.py" "$DIR/remove-browser-extension.js" "$RUNTIME_DIR/"
+chmod 755 "$RUNTIME_DIR"
+chmod 644 "$RUNTIME_DIR/daemon_watcher.py" "$RUNTIME_DIR/file_watcher.py" "$RUNTIME_DIR/remove-browser-extension.js"
+
+# Unlike a gui/<uid> LaunchAgent (which opens StandardOutPath/StandardErrorPath
+# as the target user), a LaunchDaemon always runs -- and opens its log files
+# -- as root, so no special permissions are needed here.
 mkdir -p "$LOG_DIR"
-if [[ "$RUNNING_AS_ROOT" == true ]]; then
-  chown "$TARGET_USER" "$LOG_DIR"
-fi
 mkdir -p "$PLIST_DIR"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 
@@ -132,29 +125,35 @@ done
   --debounce "$DEBOUNCE" \
   --label "$LABEL" \
   --python "$PYTHON_BIN" \
-  --daemon-script "$DIR/daemon_watcher.py" \
+  --daemon-script "$RUNTIME_DIR/daemon_watcher.py" \
   --log-dir "$LOG_DIR" \
   --output "$PLIST_PATH"
 chmod 644 "$PLIST_PATH"
 
 echo "==> Registering with launchd"
-DOMAIN="gui/$TARGET_UID"
-launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
-launchctl enable "$DOMAIN/$LABEL"
+launchctl bootout "system/$LABEL" 2>/dev/null || true
+# bootout can return before the job is fully deregistered; an immediate
+# bootstrap can then race it ("Bootstrap failed: 37: Operation already in
+# progress"). Wait for it to actually be gone first.
+for _ in 1 2 3 4 5; do
+  launchctl print "system/$LABEL" >/dev/null 2>&1 || break
+  sleep 1
+done
+launchctl bootstrap system "$PLIST_PATH"
+launchctl enable "system/$LABEL"
 
 cat <<EOF
 
 Installed and started.
-  Watching:    ${FILES[*]}
-  Command:     $COMMAND
-  Label:       $LABEL
-  Target user: ${TARGET_USER:-$(whoami)}
-  Python:      $PYTHON_BIN
-  Plist:       $PLIST_PATH
-  Logs:        $LOG_DIR/$LABEL.out.log
-               $LOG_DIR/$LABEL.err.log
+  Watching: ${FILES[*]}
+  Command:  $COMMAND
+  Label:    $LABEL
+  Python:   $PYTHON_BIN
+  Runtime:  $RUNTIME_DIR
+  Plist:    $PLIST_PATH
+  Logs:     $LOG_DIR/$LABEL.out.log
+            $LOG_DIR/$LABEL.err.log
 
-The daemon will now also start automatically at every login.
-To remove it, run: ./uninstall.sh --label $LABEL${TARGET_USER:+ --target-user $TARGET_USER}
+Runs as root, starting at every boot from now on (no login required).
+To remove it, run: sudo ./uninstall.sh --label $LABEL
 EOF

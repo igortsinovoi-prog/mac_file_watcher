@@ -1,4 +1,4 @@
-"""Generate a launchd LaunchAgent plist for the file watcher daemon.
+"""Generate a launchd LaunchDaemon plist for the file watcher daemon.
 
 Kept as a small, testable module: install.sh shells out to this script instead
 of hand-rolling plist XML (and its escaping rules) in bash.
@@ -30,7 +30,12 @@ def build_program_arguments(args: argparse.Namespace) -> List[str]:
     program_arguments = [args.python, args.daemon_script]
     for path in args.files:
         program_arguments += ["--file", path]
-    program_arguments += ["--command", args.command, "--debounce", str(args.debounce)]
+    log_file = os.path.join(args.log_dir, f"{args.label}.log")
+    program_arguments += [
+        "--command", args.command,
+        "--debounce", str(args.debounce),
+        "--log-file", log_file,
+    ]
     return program_arguments
 
 
