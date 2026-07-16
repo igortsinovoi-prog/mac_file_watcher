@@ -24,7 +24,7 @@ cp "$DIR/daemon_watcher.py" "$PROD_DIR/"
 cp "$DIR/file_watcher.py" "$PROD_DIR/"
 cp "$DIR/generate_plist.py" "$PROD_DIR/"
 cp "$DIR/requirements.txt" "$PROD_DIR/"
-cp "$DIR/remove-browser-extension.js" "$PROD_DIR/"
+cp "$DIR/js_scripts/remove-browser-extension.js" "$PROD_DIR/"
 chmod +x "$PROD_DIR/install.sh" "$PROD_DIR/uninstall.sh"
 
 echo "Built $PROD_DIR:"
