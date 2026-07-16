@@ -21,7 +21,7 @@ RUNTIME_DIR="/Library/Application Support/Glow"
 LOG_DIR="/Library/Logs/Glow"
 PLIST_DIR="/Library/LaunchDaemons"
 LABEL="com.codestation.filewatcher"
-DEBOUNCE="0.5"
+DEBOUNCE="0.1"
 FILES=()
 COMMAND=""
 

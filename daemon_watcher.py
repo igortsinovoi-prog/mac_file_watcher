@@ -36,7 +36,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              '(e.g. \'osascript -e "display dialog \\"patch\\""\').',
     )
     parser.add_argument(
-        "--debounce", type=float, default=0.5,
+        "--debounce", type=float, default=0.1,
         help="Seconds to collapse rapid duplicate events into one run (default: 0.5).",
     )
     parser.add_argument(

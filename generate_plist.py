@@ -17,7 +17,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                          help="Path to watch. Can be given multiple times.")
     parser.add_argument("--command", required=True,
                          help="Shell command to run when a watched file changes.")
-    parser.add_argument("--debounce", type=float, default=0.5)
+    parser.add_argument("--debounce", type=float, default=0.1)
     parser.add_argument("--label", required=True, help="launchd job label.")
     parser.add_argument("--python", required=True, help="Path to the python executable to run the daemon with.")
     parser.add_argument("--daemon-script", required=True, help="Path to daemon_watcher.py.")

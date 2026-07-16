@@ -15,7 +15,7 @@ COMMON_ARGS = [
 def test_parse_args_collects_multiple_files_and_defaults():
     args = generate_plist.parse_args(["--file", "a.txt", "--file", "b.txt"] + COMMON_ARGS)
     assert args.files == ["a.txt", "b.txt"]
-    assert args.debounce == 0.5
+    assert args.debounce == 0.1
     assert args.label == "com.test.watcher"
 
 
@@ -86,6 +86,6 @@ def test_main_writes_plist_file(tmp_path):
     assert loaded["ProgramArguments"] == [
         "/venv/bin/python", "/x/daemon_watcher.py",
         "--file", "watched.txt",
-        "--command", "echo hi", "--debounce", "0.5",
+        "--command", "echo hi", "--debounce", "0.1",
         "--log-file", str(tmp_path / "logs" / "com.test.watcher.log"),
     ]

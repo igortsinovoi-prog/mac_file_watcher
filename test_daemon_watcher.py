@@ -17,7 +17,7 @@ def test_parse_args_defaults():
     args = daemon_watcher.parse_args(["-f", "a.txt", "-c", "echo hi"])
     assert args.files == ["a.txt"]
     assert args.command == "echo hi"
-    assert args.debounce == 0.5
+    assert args.debounce == 0.1
     assert args.skip_initial_run is False
     assert args.daemon is False
     assert args.pidfile == daemon_watcher.DEFAULT_PIDFILE
@@ -173,7 +173,7 @@ def test_main_without_daemon_starts_and_stops_watcher():
     mock_daemonize.assert_not_called()
     mock_configure_logging.assert_called_once_with(None)
     mock_cls.assert_called_once_with(
-        files=["a.txt"], command="echo hi", debounce_seconds=0.5, run_on_start=True,
+        files=["a.txt"], command="echo hi", debounce_seconds=0.1, run_on_start=True,
     )
     fake_watcher.start.assert_called_once()
     mock_event.wait.assert_called_once()
@@ -190,7 +190,7 @@ def test_main_passes_run_on_start_false_when_skip_initial_run_flag_set():
         daemon_watcher.main(["-f", "a.txt", "-c", "echo hi", "--skip-initial-run"])
 
     mock_cls.assert_called_once_with(
-        files=["a.txt"], command="echo hi", debounce_seconds=0.5, run_on_start=False,
+        files=["a.txt"], command="echo hi", debounce_seconds=0.1, run_on_start=False,
     )
 
 

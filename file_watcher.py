@@ -50,7 +50,7 @@ class PatchEventHandler(FileSystemEventHandler):
         self,
         watched_paths: Set[str],
         on_change: Callable[[str], None],
-        debounce_seconds: float = 0.5,
+        debounce_seconds: float = 0.1,
         time_fn: Callable[[], float] = time.monotonic,
     ) -> None:
         self.watched_paths = watched_paths
@@ -82,6 +82,7 @@ class PatchEventHandler(FileSystemEventHandler):
         if not self.is_relevant(event):
             return
         if not self.should_trigger():
+            logger.info("trigger ignored because of debounce limit for %s", self.watched_paths)
             return
         # Marked *after* on_change (which runs the command, and can take
         # seconds) rather than before it, so the debounce window covers
@@ -101,7 +102,7 @@ class FileWatcherDaemon:
         self,
         files: Sequence[str],
         command: Command,
-        debounce_seconds: float = 0.5,
+        debounce_seconds: float = 0.1,
         observer_factory: Callable[[], object] = Observer,
         command_dir: Optional[str] = DEFAULT_COMMAND_DIR,
         run_on_start: bool = True,
