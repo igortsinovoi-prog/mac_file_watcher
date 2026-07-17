@@ -57,11 +57,16 @@ run_install_uninstall_test() {
   cleanup_install_test() {
     sudo launchctl bootout "$domain" 2>/dev/null || true
     sudo rm -f "$plist_path"
-    rm -f "$test_watch_file" "$test_out_file"
+    # test_out_file doesn't exist until the root-run daemon command creates it
+    # via "echo >> ...", so it's root-owned - needs sudo to remove from /tmp's
+    # sticky-bit directory.
+    rm -f "$test_watch_file"
+    sudo rm -f "$test_out_file"
   }
   trap cleanup_install_test RETURN
 
-  rm -f "$test_watch_file" "$test_out_file"
+  rm -f "$test_watch_file"
+  sudo rm -f "$test_out_file"
   touch "$test_watch_file"
 
   sudo "$DIR/prod/install.sh" \

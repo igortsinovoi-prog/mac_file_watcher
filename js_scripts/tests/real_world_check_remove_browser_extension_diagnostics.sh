@@ -21,7 +21,10 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"  # js_scripts/
 SCRIPT="$DIR/remove-browser-extension.js"
-EXPECTED_USER="$(whoami)"
+# resolveConsoleUser() reports the GUI console user (stat -f%Su /dev/console),
+# not whoever invoked this script - under sudo, $(whoami) is "root", which is
+# never what resolveConsoleUser() returns (it explicitly excludes "root").
+EXPECTED_USER="$(stat -f%Su /dev/console)"
 
 PASS=0
 FAIL=0
