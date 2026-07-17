@@ -94,10 +94,6 @@ function nowIso() {
   return f.stringFromDate($.NSDate.date).js;
 }
 
-function uuidString() {
-  return $.NSUUID.UUID.UUIDString.js;
-}
-
 function _nilToNull(v) {
   return v && v.isNil && v.isNil() ? null : v;
 }
@@ -285,26 +281,24 @@ function writePlistDict(path, obj) {
 
 // Run a command with a timeout. SIGTERM after DEFAULT_CMD_TIMEOUT_SEC; SIGKILL
 // after an additional SIGKILL_GRACE_SEC if the process does not exit.
+//
+// Uses a single NSPipe for both stdout and stderr (like shell's 2>&1),
+// deliberately NOT two separate pipes: NSTask + dual-pipe setups have a
+// classic deadlock risk if the child fills one pipe's kernel buffer while
+// we're still blocked reading the other. One shared pipe sidesteps that
+// entirely. (This function previously used temp files + late NSFileHandle
+// reads instead of a pipe read up front; that silently returned empty
+// stdout even on a successful, fast command like `id -u` - this pipe-based
+// approach is verified to actually work. Found and fixed via the same bug
+// in set-vscode-extension-version-runner.js's _runCommand.)
 function _runCommand(launchPath, args) {
-  var outFile, errFile, outFh, errFh;
   try {
-    var dir = '/tmp/glow';
-    if (!isDirectory(dir)) {
-      _fm.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(dir, true, $(), null);
-    }
-    var uid = uuidString();
-    outFile = dir + '/cmd_out_' + uid;
-    errFile = dir + '/cmd_err_' + uid;
-    _fm.createFileAtPathContentsAttributes(outFile, $(), $());
-    _fm.createFileAtPathContentsAttributes(errFile, $(), $());
-
     var task = $.NSTask.alloc.init;
     task.launchPath = launchPath;
     if (args) task.arguments = args;
-    outFh = $.NSFileHandle.fileHandleForWritingAtPath(outFile);
-    errFh = $.NSFileHandle.fileHandleForWritingAtPath(errFile);
-    task.standardOutput = outFh;
-    task.standardError  = errFh;
+    var pipe = $.NSPipe.pipe;
+    task.standardOutput = pipe;
+    task.standardError  = pipe;
     task.launch;
 
     var pid = task.processIdentifier;
@@ -318,27 +312,26 @@ function _runCommand(launchPath, args) {
         try { $.kill(pid, 9); } catch (_) {}
       }
     );
+
+    // Read before waitUntilExit: readDataToEndOfFile blocks until the
+    // pipe's write end closes (i.e. the child exits), so reading first is
+    // safe and avoids the fill-the-buffer-before-anyone-reads deadlock that
+    // reading only *after* waitUntilExit would risk.
+    var outData = pipe.fileHandleForReading.readDataToEndOfFile;
     task.waitUntilExit;
     if (killTimer.isValid) killTimer.invalidate;
     if (hardKill.isValid)  hardKill.invalidate;
 
-    outFh.closeFile;
-    errFh.closeFile;
-    var out    = _readSmallFile(outFile);
-    var errStr = _readSmallFile(errFile);
-    removeItem(outFile);
-    removeItem(errFile);
-    return { exitCode: task.terminationStatus, stdout: out, stderr: errStr };
+    var out = _dataToString(outData);
+    return { exitCode: task.terminationStatus, stdout: out, stderr: out };
   } catch (e) {
-    if (outFile) removeItem(outFile);
-    if (errFile) removeItem(errFile);
     return { exitCode: -1, stdout: '', stderr: String(e) };
   }
 }
 
-function _readSmallFile(path) {
+function _dataToString(data) {
   try {
-    var s = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
+    var s = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
     return s && !s.isNil() ? s.js : '';
   } catch (e) { return ''; }
 }

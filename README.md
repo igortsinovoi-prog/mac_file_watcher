@@ -62,7 +62,7 @@ python3 daemon_watcher.py \
 ```
 
 Flags: `-f/--file` (repeatable), `-c/--command` (required), `--debounce SECONDS`
-(default 0.5 — collapses rapid duplicate FSEvents into one command run),
+(default 0.1 — collapses rapid duplicate FSEvents into one command run),
 `--skip-initial-run` (see below), `--daemon` (detach via double-fork instead
 of running in the foreground), `--pidfile PATH`, `--log-file PATH`.
 

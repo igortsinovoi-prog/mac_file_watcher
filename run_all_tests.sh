@@ -8,6 +8,13 @@
 # label, confirms it fires on a real file change, then unregisters it). This
 # requires prod/ to already exist (run build.sh first) and requires sudo, so
 # it's opt-in and prompts for a password interactively.
+#
+# Pass --with-js-diagnostics-test to also run
+# js_scripts/tests/real_world_check_remove_browser_extension_diagnostics.sh,
+# a read-only real-world check of remove-browser-extension.js's
+# _runCommand-dependent diagnostic functions on this machine. Nothing it does
+# mutates system state, so unlike --with-install-test it needs no sudo and no
+# cleanup.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,11 +23,13 @@ cd "$DIR"
 PYTHON_BIN="$(command -v python3)"
 
 WITH_INSTALL_TEST=false
+WITH_JS_DIAGNOSTICS_TEST=false
 for arg in "$@"; do
   case "$arg" in
     --with-install-test) WITH_INSTALL_TEST=true ;;
+    --with-js-diagnostics-test) WITH_JS_DIAGNOSTICS_TEST=true ;;
     -h|--help)
-      echo "Usage: $0 [--with-install-test]"
+      echo "Usage: $0 [--with-install-test] [--with-js-diagnostics-test]"
       exit 1
       ;;
     *)
@@ -134,6 +143,12 @@ echo "=== Smoke test: multi-path debounce check ==="
 echo
 echo "=== Smoke test: run-on-start check ==="
 "$PYTHON_BIN" sanity_tests/run_on_start_check.py
+
+if [[ "$WITH_JS_DIAGNOSTICS_TEST" == true ]]; then
+  echo
+  echo "=== Real-world check: remove-browser-extension.js diagnostics ==="
+  "$DIR/js_scripts/tests/real_world_check_remove_browser_extension_diagnostics.sh"
+fi
 
 if [[ "$WITH_INSTALL_TEST" == true ]]; then
   run_install_uninstall_test
